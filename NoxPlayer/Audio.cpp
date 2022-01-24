@@ -2,6 +2,57 @@
 
 //https://graphics.stanford.edu/~mdfisher/Code/Engine/AudioCapture.cpp.html
 
+AudioBuffer* WaveBuffer = new AudioBuffer;
+std::mutex mutex;
+
+void CALLBACK waveInProc(HWAVEIN hWaveIn, UINT uMsg, DWORD dwIntance, DWORD dwParam1, DWORD dwParam2)
+{
+	switch (uMsg)
+	{
+	case WIM_DATA:
+	{
+		MMRESULT result;
+		WAVEHDR* WaveHdr = (WAVEHDR*)dwParam1;
+		std::cout << "callback" << std::endl;
+
+		// mutex.lock();
+
+		/*
+		result = waveInReset(hWaveIn);
+		if (result)
+		{
+			mutex.unlock();
+			return;
+		}
+		*/
+
+		/*
+		result = waveInPrepareHeader(hWaveIn, WaveHdr, sizeof WAVEHDR);
+		if (result)
+		{
+			std::cout << "waveInPrepareHeader Error" << std::endl;
+			waveInClose(hWaveIn);
+			mutex.unlock();
+			return;
+		}
+
+		*/
+		result = waveInAddBuffer(hWaveIn, WaveHdr, sizeof WAVEHDR);
+		if (result)
+		{
+			std::cout << "waveInAddBuffer Error" << std::endl;
+			waveInClose(hWaveIn);
+			// mutex.unlock();
+			return;
+		}
+
+		// mutex.unlock();
+
+		break;
+	}
+	}
+}
+
 Audio::Audio()
 {
 }
@@ -22,36 +73,25 @@ bool Audio::Init()
 	Format.wBitsPerSample = 16;
 	Format.cbSize = 0;
 
+	WaveBuffer->Init();
+
 	result = waveInOpen(&hWaveIn, WAVE_MAPPER, &Format, 0, 0, WAVE_FORMAT_DIRECT);
 	if (result)
-		return false;
+		std::cout << "waveInOpen Error" << std::endl;
 
+	//result = waveInOpen(&hWaveIn, WAVE_MAPPER, &Format, (DWORD_PTR)waveInProc, 0, CALLBACK_FUNCTION);
+	//if (result)
+	//std::cout << "waveInOpen Error" << std::endl;
 
-	WaveInHdr.lpData = (LPSTR)WaveIn;
-	WaveInHdr.dwBufferLength = 1000000;
-	WaveInHdr.dwBytesRecorded = 0;
-	WaveInHdr.dwUser = 0;
-	WaveInHdr.dwFlags = 0;
-	WaveInHdr.dwLoops = 0;
-	waveInPrepareHeader(hWaveIn, &WaveInHdr, sizeof(WAVEHDR));
-
-	result = waveInAddBuffer(hWaveIn, &WaveInHdr, sizeof(WAVEHDR));
+	result = waveOutOpen(&hWaveOut, WAVE_MAPPER, &Format, 0, 0, WAVE_FORMAT_DIRECT);
 	if (result)
-		return false;
-
-
-	// result = waveOutOpen(&hWaveOut, WAVE_MAPPER, &Format, 0, 0, WAVE_FORMAT_DIRECT);
-	// if (result)
-	//  return false;
+		std::cout << "Out Open Error" << std::endl;
 
 	return true;
 }
 
 void Audio::Destroy()
 {
-	waveOutUnprepareHeader(hWaveOut, &WaveInHdr, sizeof(WAVEHDR));
-	waveInUnprepareHeader(hWaveIn, &WaveInHdr, sizeof(WAVEHDR));
-
 	waveInClose(hWaveIn);
 	waveOutClose(hWaveOut);
 }
@@ -59,65 +99,228 @@ void Audio::Destroy()
 
 void Audio::Start()
 {
-	MMRESULT result;
-
-	AudioSpeaker = std::thread(StartAudioSpeakerThread, hWaveOut, WaveInHdr);
-
-	result = waveInStart(hWaveIn);
-	if (result)
-		std::cout << "오디오 입력이 시작되지 못했습니다." << std::endl;
-
-	// AudioSpeaker = std::thread(StartAudioSpeakerThread, std::ref(hWaveOut), std::ref(WaveInHdr), BufferLength / SampleRate * 1000);
-
+	AudioCapture = std::thread(StartAudioCaptureThread, std::ref(hWaveIn), std::ref(Format));
+	AudioSpeaker = std::thread(StartAudioSpeakerThread, std::ref(hWaveOut), std::ref(hWaveIn), std::ref(Format));
 }
 
 void Audio::End()
 {
-
-	MMRESULT result;
-
-	result = waveOutOpen(&hWaveOut, WAVE_MAPPER, &Format, 0, 0, WAVE_FORMAT_DIRECT);
-	if (result)
-		std::cout << "Out Open Error" << std::endl;
-
-	result = waveOutWrite(hWaveOut, &WaveInHdr, sizeof(WaveInHdr));
-	if (result)
-		std::cout << "Out Write Error" << std::endl;
-
 	Sleep(1000 * 20);
 }
 
-void StartAudioSpeakerThread(HWAVEOUT& hWaveOut, WAVEHDR& WaveInHdr, int WaitSeconds)
+void StartAudioCaptureThread(HWAVEIN& hWaveIn, WAVEFORMATEX& Format)
 {
-	while (true)
-	{
-		if (waveOutReset(hWaveOut))
-		{
-			std::cout << "waveOutPrepareHeader Error" << std::endl;
-			break;
-		}
-
-		// 장치에 출력 준비를 알리는 함수
-		if (waveOutPrepareHeader(hWaveOut, &WaveInHdr, sizeof(WAVEHDR)))
-		{
-			std::cout << "waveOutPrepareHeader Error" << std::endl;
-			break;
-		}
-
-		// 출력 시작
-		if (waveOutWrite(hWaveOut, &WaveInHdr, sizeof(WAVEHDR)))
-		{
-			std::cout << "waveOutPrepareHeader Error" << std::endl;
-			break;
-		}
-	}
-	/*
 	MMRESULT result;
 
-	result = waveOutWrite(hWaveOut, &WaveInHdr, sizeof(WaveInHdr));
-	if (result)
-		std::cout << "오디오 출력이 시작되지 못했습니다." << std::endl;
+	result = WaveBuffer->CaptureStart(hWaveIn);
+	if (!result)
+		std::cout << "CaptureStartError" << std::endl;
+E1:
+	Sleep(1000);
 
-	std::this_thread::sleep_for(std::chrono::milliseconds(WaitSeconds));
-	*/
+	mutex.lock();
+
+	WaveBuffer->CaptureReSet(hWaveIn);
+
+	mutex.unlock();
+
+	goto E1;
+
+	result = WaveBuffer->CaptureEnd(hWaveIn);
+	if (!result)
+		std::cout << "CaptureEndError" << std::endl;
+}
+
+void StartAudioSpeakerThread(HWAVEOUT& hWaveOut, HWAVEIN& hWaveIn, WAVEFORMATEX& Format)
+{
+	MMRESULT result;
+
+	Sleep(2000); // 초반 딜레이
+
+	while (true)
+	{
+		std::cout << "hello" << std::endl;
+		mutex.lock();
+
+		result = WaveBuffer->SpeakerStart(hWaveOut);
+		if (!result)
+		{
+			std::cout << "SpeakerStartError" << std::endl;
+			break;
+		}
+
+		Sleep(1000);
+		waveInReset(hWaveIn);
+
+		if (!result)
+			break;
+
+		mutex.unlock();
+
+		Sleep(100);
+	}
+
+	mutex.unlock();
+	std::cout << " Speaker Error" << std::endl;
+}
+
+AudioBuffer::AudioBuffer()
+{
+}
+
+AudioBuffer::~AudioBuffer()
+{
+}
+
+MMRESULT AudioBuffer::Init()
+{
+	WaveBuffer = (short int *)malloc(sizeof(short int *) * BufferSize);
+
+	WaveHdr.lpData = (LPSTR)WaveBuffer;
+	WaveHdr.dwBufferLength = 176400;
+	WaveHdr.dwBytesRecorded = 0;
+	WaveHdr.dwUser = 0;
+	WaveHdr.dwFlags = 0;
+	WaveHdr.dwLoops = 0;
+
+	return true;
+}
+
+MMRESULT AudioBuffer::CaptureStart(HWAVEIN& hWaveIn)
+{
+	MMRESULT result;
+
+	mutex.lock();
+
+	result = waveInPrepareHeader(hWaveIn, &WaveHdr, sizeof WAVEHDR);
+	if (result)
+	{
+		mutex.unlock();
+		return !result;
+	}
+
+	result = waveInAddBuffer(hWaveIn, &WaveHdr, sizeof WAVEHDR);
+	if (result)
+	{
+		mutex.unlock();
+		return !result;
+	}
+
+	result = waveInStart(hWaveIn);
+	if (result)
+	{
+		mutex.unlock();
+		return !result;
+	}
+	
+	mutex.unlock();
+
+	return true;
+}
+
+MMRESULT AudioBuffer::CaptureReSet(HWAVEIN& hWaveIn)
+{
+	MMRESULT result;
+
+	mutex.lock();
+
+	// BufferReset();
+
+	result = waveInPrepareHeader(hWaveIn, &WaveHdr, sizeof WAVEHDR);
+	if (result)
+	{
+		mutex.unlock();
+		return !result;
+	}
+
+	result = waveInAddBuffer(hWaveIn, &WaveHdr, sizeof WAVEHDR);
+	if (result)
+	{
+		mutex.unlock();
+		return !result;
+	}
+
+	result = waveInReset(hWaveIn);
+	if (result)
+	{
+		mutex.unlock();
+		return !result;
+	}
+
+	mutex.unlock();
+
+	return true;
+}
+
+MMRESULT AudioBuffer::CaptureEnd(HWAVEIN& hWaveIn)
+{
+	MMRESULT result;
+
+	mutex.lock();
+
+	result = waveInStop(hWaveIn);
+	if (result)
+	{
+		mutex.unlock();
+		return !result;
+	}
+
+	result = waveInReset(hWaveIn);
+	if (result)
+	{
+		mutex.unlock();
+		return !result;
+	}
+
+	mutex.unlock();
+
+	return true;
+}
+
+MMRESULT AudioBuffer::SpeakerStart(HWAVEOUT& hWaveOut)
+{
+	MMRESULT result;
+
+	mutex.lock();
+
+	result = waveOutPrepareHeader(hWaveOut, &WaveHdr, sizeof WAVEHDR);
+	if (result)
+	{
+		mutex.unlock();
+		return !result;
+	}
+
+	result = waveOutWrite(hWaveOut, &WaveHdr, sizeof WAVEHDR);
+	if (result)
+	{
+		mutex.unlock();
+		return !result;
+	}
+
+	mutex.unlock();
+
+	return true;
+}
+
+MMRESULT AudioBuffer::SpeakerEnd(HWAVEOUT& hWaveOut)
+{
+	mutex.lock();
+	waveOutReset(hWaveOut);
+	mutex.unlock();
+
+	return true;
+}
+
+MMRESULT AudioBuffer::BufferReset()
+{
+	mutex.lock();
+
+	delete WaveBuffer;
+	WaveBuffer = (short int*)malloc(sizeof(short int*) * BufferSize);
+
+	WaveHdr.lpData = (LPSTR)WaveBuffer;
+
+	mutex.unlock();
+
+	return true;
 }
